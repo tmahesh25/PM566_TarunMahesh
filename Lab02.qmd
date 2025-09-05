@@ -1,0 +1,11 @@
+---
+title: "PM 566: Lab 02"
+author: "Tarun Mahesh"
+format: 
+  html:
+    embed-resources: true
+fig-width: 10
+fig-height: 10
+theme: sandstone
+---
+
