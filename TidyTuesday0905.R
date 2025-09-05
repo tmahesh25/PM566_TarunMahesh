@@ -1,0 +1,16 @@
+frogID_data <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-09-02/frogID_data.csv')
+frog_names <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-09-02/frog_names.csv')
+dim(frog_names)
+names(frog_names)
+summary(frogID_data)
+View(frogID_data)
+plot(frogID_data$decimalLongitude, frogID_data$decimalLatitude, )
+class(frogID_data$eventDate)
+hist(frogID_data$eventDate, breaks=30)
+sort(frogID_data$eventDate, decreasing = TRUE)
+frog1109 <- frogID_data[frogID_data$eventDate == "2023-11-09", ]
+frog1109
+barplot(table(frog1109$recordedBy))
+table(frog1109$recordedBy)
+barplot(table(frogID_data$scientificName))
+sort(unique(frogID_data$scientificName, decreasing = TRUE))
