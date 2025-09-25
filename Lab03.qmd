@@ -1,0 +1,143 @@
+---
+title: "PM 566: Lab 03"
+author: "Tarun Mahesh"
+format: 
+  html:
+    embed-resources: true
+fig-width: 10
+fig-height: 10
+theme: sandstone
+---
+Part 1: Checking the dimensions, headers and footers
+
+1. How many columns and rows are there?
+```{r}
+met <- read.csv("met_all.gz")
+dim(met)
+head(met)
+tail(met)
+```
+Taking a look at the variables: 
+```{r}
+str(met)
+```
+Taking a closer look at only the key variables i.e. Year, Day, Hour, Temperature, Elevation and Wind Speed 
+```{r}
+table(met$year)
+```
+All data is from the year 2019 
+```{r}
+table(met$day)
+table(met$hour)
+```
+```{r}
+summary(met$temp)
+summary(met$elev)
+summary(met$wind.sp)
+```
+Anomalies: 
+The minimum temperature recorded in this dataset is -40, the maximum elevation recorded is 9999, and the wind speed data has 79693 NA values. 
+
+Fixes: 
+1. Replacing all 9999 elevations (impossible) with NA 
+```{r}
+met$elev[met$elev==9999.0] <- NA
+summary(met$elev)
+```
+Now, the highest weather station is at an elevation of 4113 m. 
+
+2. Minimum temperature of -40C looks suspiscious and observations of -40 degC temperatures should be removed. 
+
+```{r}
+met <- met[met$temp > -40, ]
+met2 <-met[order(met$temp), ]
+head(met2)
+```
+met2 variable is now assigned the ascending order of temperature values from our main dataset that are > -40C, and we notice that the minimum temperature is now -17.2C. 
+
+The location of the "suspicious" temperature is lat 38.767 and lon -104.3, which according to Google Earth is at 1838m. 
+
+Let us remove all the temperatures colder than -15 degC, and summarise the data. 
+
+```{r}
+met <- met[met$temp > -15, ]
+met2 <- met[order(met$temp), ]
+head(met2)
+```
+From head(met2), we note that the new minimum temperature is a more reasonable -3 deg C. 
+
+Part 2: Calculation of summary statistics
+```{r}
+elev <- met[met$elev==max(met$elev, na.rm = TRUE), ]
+summary(elev)
+
+cor(elev$temp, elev$wind.sp, use="complete.obs")
+cor(elev$temp, elev$hour, use="complete.obs")
+cor(elev$wind.sp, elev$day, use="complete.obs")
+cor(elev$wind.sp, elev$hour, use="complete.obs")
+cor(elev$temp, elev$day, use="complete.obs")
+```
+Correlations: 
+Temperature and wind speed have a very weak inverse relationship 
+Temperature and hours have a moderately positive correlation 
+Wind speed and day also have a moderately positive correlation 
+Wind speed and day have a very weak relationship 
+Teperature and day also have no meaningful linear relationship
+
+Part 3: Exploratory Graphs 
+
+```{r}
+hist(met$elev, breaks=100)
+hist(met$temp)
+hist(met$wind.sp)
+```
+Elevation is very skewed to the right, most stations are at low to moderate altitudes. 
+Temperature (after cleaning) shows a normal distribution 
+Windspeed is also right skewed, and many light-wind hours are observed. 
+
+Where is the station with the highest elevation located?
+
+```{r}
+library(leaflet)
+library(tidyverse)
+
+leaflet(elev) %>%
+  addProviderTiles('OpenStreetMap') %>% 
+  addCircles(lat=~lat,lng=~lon, opacity=1, fillOpacity=1, radius=100)
+```
+```{r dt-setup, include=FALSE}
+library(data.table)
+setDT(elev)   # convert by reference
+```
+
+```{r}
+elev$date <- with(elev, ymd_h(paste(year, month, day, hour, sep= ' ')))
+summary(elev$date)
+elev <- elev[order(date)]
+head(elev)
+```
+Now with the date-time variable, we plot the time series of temperature and wind speed 
+
+```{r}
+plot(elev$date, elev$temp, type='l')
+plot(elev$date, elev$wind.sp, type='l')
+```
+
+To summarize this data as visualized in the above plots:
+
+I see that the station with max elevation has a pretty cyclical temperature fluctuation every day, but there seems to be a very noticeable spike in wind speeds mid-August, possibly as the Fall season sets in. 
+
+A question that I would like to ask, and build an exploratory plot for: 
+Which hours have the most data? 
+For this, I could plot the frequency by hour, and use a barplot to visualize- 
+
+```{r}
+barplot(table(elev$hour))
+```
+Looking at ?barplot, I see that I can use xlab and ylab to label the x and y axes respectively. 
+
+```{r}
+barplot(table(elev$hour), xlab="Hour", ylab="Count")
+```
+
+And it seems like the data is well distributed through the hours. 
