@@ -78,7 +78,7 @@ hist(x)
 
 sample(10, 5)
 sample(c(0,5,-5), 1)
-sample(c(0,5,-5), 50)
+sample(c(0,5,-5), 50, replace = TRUE)
 
 
 ###########
