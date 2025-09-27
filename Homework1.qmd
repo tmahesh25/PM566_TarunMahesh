@@ -1,0 +1,513 @@
+---
+title: "PM 566: Homework 01"
+author: "Tarun Mahesh"
+format: 
+  html:
+    embed-resources: true
+fig-width: 10
+fig-height: 10
+theme: sandstone
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+# **PM-566 \| Introduction to Health Data Science**
+
+# Homework 01
+
+*Primary question to answer*- Has the daily concentrations of PM2.5
+decreased in California in the 20 years spanning 2002 - 2022?
+
+*Why answer this question?*
+
+PM2.5 is highly dangerous to health, and a quick glance at the epa.gov
+website and Google explains that the primary health risks associated
+with the inhalation of PM2.5 include respiratory issues like asthma
+exacerbation and bronchitis, cardiovascular problems and even premature
+death in highly sensitive individuals.
+
+Answering whether PM2.5 has decreased in the state of California over
+the 2-decade span between 2002 and 2022 will help us analyse if the EPA
+and US Government's efforts to improve air quality have been successful,
+and can provide a valuable starting point for any efforts we take moving
+forward to reduce air pollution.
+
+# STEP 1:
+
+EDA Checklist items 1 through 5.
+
+-   1.1: Read in the data
+
+-   1.2: Check the size of the data
+
+-   1.3: Examine the variables and their types
+
+-   1.4: Look at the top and bottom of the data
+
+-   1.5: Visualize the distribution of the key variables
+
+The aim is to perform steps 1.1-1.5 for the 2002 and 2022 data from the
+EPA website.
+
+1.1: Read in the data + 1.2: Check data size \[The files for 2002 and
+2022 (California, All Sites) were downloaded from the EPA website, and
+the csv files were renamed to "2022_EPA" and "2002_EPA", and saved into
+the .gitignore folder in my repository.\]
+
+```{r}
+# Loading Required Libraries
+
+# Reading Data
+epa22 <- read.csv("data/2022_EPA.csv")
+epa02 <- read.csv("data/2002_EPA.csv")
+
+# Checking Dimensions
+dim(epa22)
+dim(epa02)
+```
+
+EPA 2022 data has 59918 rows and 22 columns EPA 2002 data has 15976 rows
+and 22 columns
+
+1.3: Variables and their types
+
+```{r}
+# Variable Names and Types
+print(paste("EPA 2022 Variables:", str(epa22)))
+print(paste("EPA 2002 Variables:", str(epa02)))
+```
+
+Both data files (2022 and 2002) have the same 22 variables of the same
+data type
+
+1.4: Top and bottom of the data
+
+```{r}
+# Headers and Footers
+head(epa22)
+tail(epa22)
+
+head(epa02)
+tail(epa02)
+```
+
+EPA 2022 data ranges from 01/01/2022- 12/31/2022 & values are stored
+under the variable "Date". There seems to be a sudden spike in PM2.5
+values on the 19th and 25th of December.
+
+EPA 2002 data ranges from 01/05/2002- 12/31/2002 & values are stored
+under the variable "Date". The air quality data in 2002, upon initial
+inspection, seems to indicate higher PM2.5 at the start of the year and
+lowered levels towards the end, and a similar spike is seen on the 25th
+of December.
+
+1.5 Visualizing the distribution of the key variable- PM2.5 To visualize
+the distribution of PM2.5, we can plot a quick histogram:
+
+```{r}
+# 2022 Data
+hist(epa22$Daily.Mean.PM2.5.Concentration, breaks = 40, 
+     main = "PM2.5 in 2022 CA", xlab = "PM2.5 ug/m3")
+
+hist(epa02$Daily.Mean.PM2.5.Concentration, breaks = 40, 
+     main = "PM2.5 in 2002 CA", xlab = "PM2.5 ug/m3")
+```
+
+It looks like the PM2.5 in 2022 lies strongly towards the 0-50 range,
+with a majority (visually) between 0-10 ug/m3. In 2002, a lot of
+observations fall between 0-40 ug/m3, but some values lie beyond 40
+ug/m3.
+
+The EDA steps 1-5 are now complete.
+
+# STEP 2:
+
+Combining 2002 & 2022 data, and changing the name of the PM2.5 variable.
+
+Since the variables and their types match 1-1 between 2002 and 2022, it
+makes sense to combine them into the same data frame for convenience.
+And, since the PM2.5 variable is currently too long to reference each
+time ("Daily.Mean.PM2.5.Concentration"), it makes it easier to change
+the name to something more accessible. I am choosing "MeanPM". I will be
+using Roger Peng's EDA manual to write some of my code.
+
+2.1 Combining both data frames
+
+```{r}
+# We need dplyr for this action 
+library(dplyr)
+
+# Using the bind_rows function to merge both data frames 
+epa_all <- bind_rows(epa02, epa22)
+
+# Checking if the binding was successful using head and tail 
+head(epa_all)
+tail(epa_all)
+```
+
+head(epa_all)- Data from 2002 visible tail(epa_all)- Data from 2022
+visible Interpretation- The merge was successful.
+
+2.2 Creating a column for "Year" from "Date"
+
+```{r}
+# We need lubridate for this action
+library(lubridate)
+
+epa_all$Year <- year(mdy(epa_all$Date)) # The reason is used mdy here is 
+# because Date is stored as a character value in the original data frame
+
+# Checking to see if it worked
+head(epa_all$Year)
+tail(epa_all$Year)
+
+```
+
+2.3 Renaming the PM2.5 variable
+
+```{r}
+# We need dplyr for this action 
+library(dplyr)
+
+# Renaming the column 
+epa_all <- rename(epa_all, MeanPM = Daily.Mean.PM2.5.Concentration) 
+
+# Checking to see if it worked 
+head(epa_all$MeanPM)
+tail(epa_all$MeanPM)
+```
+
+The MeanPM (previously Daily.Mean.PM2.5.Concentration) column now
+reflects the PM2.5 values.
+
+# STEP 3:
+
+Creating a basic map(s) of the locations of the monitoring sites, using
+different colors for each year. For this step, I will be using leaflet.
+
+```{r}
+# Loading in the libraries I will need 
+library(dplyr)
+library(leaflet)
+
+sites <- epa_all %>% distinct(Year, Site.ID, Site.Latitude, Site.Longitude)
+
+leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(data = filter(sites, Year == 2002), lng = ~Site.Longitude, lat = ~Site.Latitude, color = "blue", fillOpacity = 0, radius = 6) %>%
+  addCircleMarkers(data = filter(sites, Year == 2022), lng = ~Site.Longitude, lat = ~Site.Latitude, color = "red", fillOpacity = 0.9, radius = 5)
+
+```
+
+Summary: The 2002 and 2022 data are well distributed throughout the
+state of California, but the 2022 data is much denser, and has more data
+points as compared to 2002. I would say the overall distribution is
+stable. Since I made the 2002 data points ring-shaped, I can easily
+visualize the overlapping sites on my map.
+
+# STEP 4: 
+
+Finding missing or implausible values of PM2.5, calculate the
+proportions of such data per year and then finding the temporal
+distribution of missing/implausible data.
+
+For this, we can 1. Find the number of missing/NA values per year. 2.
+Define a plausible range for PM2.5, and then find the values that lie
+outside of it. 3. Find the total number of PM2.5 values (including the
+NA and implausible entries) for the years 2002 and 2022, and then use a
+simple division to find the proportion.
+
+```{r}
+# NA values per year: Using dplyr to summarise the NA values per year
+
+library(dplyr)
+
+epa_all %>% group_by(Year) %>% summarise(missing_PM = sum(is.na(MeanPM)), 
+                                         total = n(), 
+                                         propor_missing = missing_PM / total)
+
+```
+
+There seems to be no NA values in either year, which is a good sign.
+
+"Implausible" values of PM2.5 can vary based on the definition of
+implausibility. Any zero or negative PM2.5 value does not make sense
+logically, and thus, the lower range of implausibility can be set at \<=
+0. For the upper range of implausibility, EPA standards suggest that any
+PM2.5 values greater than 200 are highly unhealthy (hazardous above
+300). My immediate thought, is that the State of California has
+historically poor air quality metrics, and also experiences regular
+wildfires which can add to the PM2.5 levels. So, in order to decide if
+an upper level is to be set for implausibility, I would like to look at
+the dates when PM2.5 \> 200 were observed, and see if those dates
+correlate with any known high-pollution events during that year in
+California.
+
+```{r}
+MeanPMImp22 <- epa_all[epa_all$MeanPM > 200 & epa_all$Year == 2022, ]
+MeanPMImp02 <- epa_all[epa_all$MeanPM > 200 & epa_all$Year == 2002, ]
+
+dim(MeanPMImp22)
+dim(MeanPMImp02)
+
+```
+
+We see that there are no PM2.5 values \> 200 in 2002, and 7 such values
+in 2022. Let's try and see what dates were these 7 values were recorded.
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+MeanPMImp22 <- MeanPMImp22 %>% select(MeanPM, Date, County)
+View(MeanPMImp22)
+
+epa_22 <- epa_all %>% filter(Year == 2022)
+
+ggplot(epa_22, aes(x = as.Date(Date, format = "%m/%d/%Y"), y = MeanPM)) + 
+  geom_line(color = "blue") + 
+  geom_point(data = subset(epa_22, MeanPM > 200), 
+  aes(x = as.Date(Date, format = "%m/%d/%Y"), y = MeanPM), 
+  color = "red") + 
+  labs(title = "Daily Mean PM2.5 in CA, 2022", x = "Date", y = "PM2.5 ug/m3")
+
+```
+
+A quick glance at the Calfire website, searching for fire incidents in
+these counties in 2022 shows me that there have been
+wildfires/structural fires close to the recorded dates of PM values \>
+200, so I will retain these values, and only remove \<= 0 PM2.5 values
+from epa_all.
+
+```{r}
+library(dplyr)
+epa_all <- filter(epa_all, MeanPM > 0)
+summary(epa_all$MeanPM)
+```
+
+We now see that the new minimum for epa_all is 0.10 and that all rows
+where MeanPM \<= 0 have been removed.
+
+# STEP 5:
+
+Exploring the main question of interest (whether PM2.5 values have
+reduced between 2002 and 2022 in California) at three levels of spatial
+resolution
+
+**5.1: State**
+
+For the state-level visualization, it would be useful to see a boxplot
+distributed by year.
+
+```{r}
+# Required libraries 
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+ggplot(epa_all, aes(factor(epa_all$Year), epa_all$MeanPM)) + geom_boxplot() + 
+  labs(x = "Year", y = "PM2.5 (ug/m3)", 
+       title = "California Daily PM2.5 by year")
+```
+
+We could also visualise this as a violin plot
+
+```{r}
+ggplot(epa_all, aes(factor(Year), MeanPM)) + 
+  geom_violin(fill = "lightblue", color = "black") + 
+  labs(x = "Year", y = "PM2.5 ug/m3", 
+       title = "California Daily PM2.5 Distribution by Year")
+```
+
+Now for some summary statistics:
+
+```{r}
+state_level <- epa_all %>% group_by(Year) %>% 
+  summarise(mean_PM = mean(MeanPM, na.rm = TRUE), 
+            median_PM = median(MeanPM, na.rm = TRUE), 
+            min_PM = min(MeanPM, na.rm = TRUE), 
+            max_PM = max(MeanPM, na.rm = TRUE)) 
+
+print(state_level)
+```
+
+**Interpretation**: *Both* mean *and* median PM2.5 values decreased in
+2022 compared to 2002, even though the maximum PM2.5 recorded in 2022
+was much higher than 2002. The violin plot has a long tail, which
+represents the extreme values of PM2.5 recorded in 2022.
+
+**5.2: County**
+
+For the county-level visualization, it might be useful to look at a
+slopegraph, which is commonly used in biological data analyses to look
+at changes in gene expression levels (for small sets of genes) over
+time. (slopegraphs aren't usually used for large amounts of data (like
+tens of thousands of genes), because the plot begins to look messy). The
+question here, is whether to plot median or mean PM2.5 values. Median
+usually discounts extreme outliers and represents the way data looks
+independent of small data outliers, while using mean can skew the
+plotted observation to either extreme, but has the advantage of
+capturing the variability in the data. I would like to plot both, and
+compare the two.
+
+```{r}
+library(stringr)
+
+county_data <- epa_all %>% group_by(County, Year) %>% 
+  summarise(med = median(MeanPM), .groups="drop")
+
+ggplot(county_data, aes(x = factor(Year), y = med, group = County)) + 
+  geom_line() + geom_point() + labs(x = NULL, y = "Median PM2.5 ug/m3", 
+                                    title = "County medians: 2002 to 2022") + 
+  theme(axis.text.x = element_text(size = 6), 
+        axis.text.y = element_text(size = 6), 
+        strip.text = element_text(size = 7))
+
+# To also make this plot a layout, with one plot for each county 
+
+ggplot(county_data, aes(x = factor(Year), y = med, group = County)) + 
+  geom_line() + geom_point() + facet_wrap(~ str_wrap(County, width = 30)) + 
+  labs(x = NULL, y = "Median PM2.5 ug/m3", title = "County medians by year") + 
+  theme(axis.text.x = element_text(size = 6), 
+        axis.text.y = element_text(size = 6), 
+        strip.text = element_text(size = 7))
+
+# The same plots, but using Mean
+
+county_data2 <- epa_all %>% group_by(County, Year) %>% 
+  summarise(men = mean(MeanPM), .groups = "drop")
+
+ggplot(county_data2, aes(x = factor(Year), y = men, group = County)) + 
+  geom_line() + geom_point() + labs(x = NULL, y = "Mean PM2.5 ug/m3", 
+                                    title = "County average: 2002 to 2022") + 
+  theme(axis.text.x = element_text(size = 6), 
+        axis.text.y = element_text(size = 6), 
+        strip.text = element_text(size = 7))
+
+ggplot(county_data2, aes(x = factor(Year), y = men, group = County)) + 
+  geom_line() + geom_point() + facet_wrap(~ str_wrap(County, width = 30)) + 
+  labs(x = NULL, y = "Mean PM2.5 ug/m3", title = "County means by year") + 
+  theme(axis.text.x = element_text(size = 6), 
+        axis.text.y = element_text(size = 6), 
+        strip.text = element_text(size = 7))
+```
+
+Summarizing the county-level data:
+
+```{r}
+library(stringr)
+
+county_level <- epa_all %>% group_by(County, Year) %>% 
+  summarise(mean_PM = mean(MeanPM, na.rm = TRUE), 
+            median_PM = median(MeanPM, na.rm = TRUE), 
+            .groups = "drop") 
+
+most_change_CL <- county_level %>% 
+  pivot_wider(names_from = Year, values_from = c(mean_PM, median_PM)) %>% 
+  mutate(mean_change= mean_PM_2002 - mean_PM_2022, 
+         median_change = median_PM_2002 - median_PM_2022) 
+
+most_change_mean <- most_change_CL %>% arrange(desc(mean_change)) %>% 
+  select(County, mean_change)
+most_change_median <- most_change_CL %>% 
+  arrange(desc(median_change)) %>% select(County, median_change)
+
+print(county_level)
+print(most_change_mean)
+print(most_change_median)
+```
+
+**Interpretation**: Visually, the slopegraphs show that in most counties
+in California, the median and mean PM2.5 reduced in 2022 compared to
+2002. Using pivot_wider, we can find the county with the most change in
+median and mean PM2.5. Since in pivot_wider I subtract the mean/median
+PM of 2022 *from* 2002, the most positive values represent the most
+decrease in PM2.5 (mean/median) in 2022.
+
+Riverside saw the best improvement in mean PM2.5, while Tulare saw the
+best improvement in median PM2.5. This is really interesting, as it
+seems to highlight the difference between using mean vs. median to
+analyze data.
+
+**5.3: City** (Los Angeles County Sites)
+
+For the city-level visualization, I see two different identifiers for
+Sites- "Local.Site.Name" and "Site.ID". I want to see how the data is
+recorded for both variables and decide which one to use.
+
+```{r}
+table(epa_all$Local.Site.Name)
+table(epa_all$Site.ID)
+```
+
+It seems like the local site names are very variable. Some names are
+capitalised while others are not, which might make it difficult for data
+processing. Instead, using the Site ID can ensure consistency.
+
+```{r}
+library(stringr)
+
+la_sites <- epa_all %>% filter(County == "Los Angeles") %>% 
+  group_by(Site.ID, Year, Local.Site.Name) %>% 
+  summarise(med = median(MeanPM, .groups="drop"))
+
+ggplot(la_sites, aes(x = factor(Year), y = med, group = Site.ID)) + geom_line() + 
+  geom_point() + facet_wrap(~ str_wrap(Local.Site.Name, width = 15), 
+                            scales = "free_y") + 
+  labs(x = NULL, y = "Median PM2.5 ug/m3", 
+       title = "LA County site medians 2002 vs 2022")
+
+# Repeating the same plots but with mean PM2.5 values. 
+la_sites_mean <- epa_all %>% filter(County == "Los Angeles") %>% group_by(Site.ID, Year, Local.Site.Name) %>% 
+  summarise(men = mean(MeanPM, .groups="drop"))
+
+ggplot(la_sites_mean, aes(x = factor(Year), y = men, group = Site.ID)) + 
+  geom_line() + geom_point() + 
+  facet_wrap(~ str_wrap(Local.Site.Name, width = 15), scales = "free_y") + 
+  labs(x = NULL, y = "Mean PM2.5 ug/m3", 
+       title = "LA County site means 2002 vs 2022")
+```
+
+Summarizing the site level data:
+
+```{r}
+site_level <- epa_all %>% filter(County == "Los Angeles") %>% 
+  group_by(Local.Site.Name, Year) %>% 
+  summarise(mean_PM = mean(MeanPM, na.rm = TRUE), 
+            median_PM = median(MeanPM, na.rm = TRUE), 
+            .groups = "drop")
+
+most_change_SL <- site_level %>% 
+  pivot_wider(names_from = Year, values_from = c(mean_PM, median_PM)) %>% 
+  mutate(mean_change_SL = mean_PM_2002 - mean_PM_2022, 
+         median_change_SL = median_PM_2002 - median_PM_2022)
+
+most_change_mean_SL <- most_change_SL %>% arrange(desc(mean_change_SL)) %>% 
+  select(Local.Site.Name, mean_change_SL)
+most_change_median_SL <- most_change_SL %>% arrange(desc(median_change_SL)) %>% 
+  select(Local.Site.Name, median_change_SL)
+
+print(site_level)
+print(most_change_mean_SL)
+print(most_change_median_SL)
+```
+
+**Interpretation**: It seems like although there were no NA values for
+PM2.5, there are some PM2.5 values recorded without a Local.Site.Name
+attribute, and some Local.Site.Name attributes for whom PM2.5 was not
+recorded in one or the other year. Regardless, comparing the line plots
+for 2002 to 2022 for all sites in LA county, median *and* mean PM2.5
+decreased in 2022. The summary statistics using pivot_wider also show us
+that Pasadena saw the most improvement in both mean *and* median PM2.5
+in LA county.
+
+# CONCLUSION 
+
+From the exploratory data analysis, across CA, daily PM2.5
+concentrations decreased from 2002 to 2022. Most counties and LA County
+sites show declines, with the largest improvements being in
+Riverside/Tulare. While 2022 had a few extremely polluted days (PM2.5 \>
+200 ug/m3), these are one-off incidents and not persistent. Overall, the
+evidence supports that PM2.5 levels decreased between 2002 and 2022 in
+California.
