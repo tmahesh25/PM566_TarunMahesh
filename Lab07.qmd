@@ -1,0 +1,153 @@
+---
+title: "PM 566: Lab 07"
+author: "Tarun Mahesh"
+execute:
+  warning: false
+format: 
+  html:
+    embed-resources: true
+fig-width: 10
+fig-height: 10
+theme: sandstone
+---
+
+# Question 1: How many Sars-Cov-2 papers?
+
+Build an automatic counter of Sars-Cov-2 papers available on PubMed. Apply XPath to extract the number of results returned by PubMed when you search for “sars-cov-2.” The following URL will perform the search: <https://pubmed.ncbi.nlm.nih.gov/?term=sars-cov-2>.
+
+```{r}
+library(rvest)
+library(httr)
+library(stringr)
+library(xml2)
+
+# Downloading the website
+website <- xml2::read_html("https://pubmed.ncbi.nlm.nih.gov/?term=sars-cov-2")
+
+# Finding the counts
+counts <- xml2::xml_find_first(website, "/html/body/main/div[9]/div[2]/div[2]/div[1]/div[1]/h3/span") 
+
+# Turning it into text
+counts <- as.character(counts)
+
+# Extracting the data using regex
+totalcount <- stringr::str_extract(counts, "[0-9,.]+")
+
+# Removing any commas/dots so that we can convert to numeric
+totalcount <- gsub('[.,]', '', totalcount)
+
+totalcount <- as.numeric(totalcount)
+print(totalcount)
+```
+
+Answer: 263523 papers.
+
+# **Question 2: Get article abstracts and authors**
+
+Narrowing the search to California: <https://pubmed.ncbi.nlm.nih.gov/?term=sars-cov-2%20california>. Narrow the search down to just the years 2020 and 2021. Donwload the abstracts and author information for all of these articles. Read this into R.
+
+```{r}
+# read in text, each line is a separate character
+abstracts <- readLines('data/abstract-sars-cov-2-set.txt', warn = FALSE)
+# combine all text into one character
+abstracts <- paste(abstracts, collapse = '\n')
+# split the text whenever 3 new lines occur in a row (indicating two blank lines)
+abstracts <- unlist(strsplit(abstracts, split = '\n\n\n'))
+# replace any remaining "\n" symbols with spaces
+abstracts <- gsub("\n", " ", abstracts)
+# replace multiple spaces with single space
+abstracts <- gsub(" +", " ", abstracts)
+```
+
+# **Question 3: Distribution of universities**
+
+Look through the first couple abstracts and see how the author affiliations are formatted.
+
+Using the function `stringr::str_extract_all()` applied on `abstracts`, capture all the terms of the form:
+
+1.  “… University”
+
+2.  “University of …”
+
+3.  “… Institute of …”
+
+Write a regular expression that captures all such instances.
+
+```{r}
+library(stringr)
+institution <- str_extract_all(
+  abstracts,
+  "[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\s+University | [A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\s+University of +[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\s|[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\s+ Institute of +[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*\\s"
+  ) 
+institution <- unlist(institution)
+institution <- sort(table(institution), decreasing = TRUE)[1:10]
+institution
+```
+
+Q: What are the 10 most common institutions? Discuss how you could you improve these results.
+
+A: "The University" is picked up, some of the university names are clipped, and universities with hyphenated names are also not included in this. I could improve the regex by using
+
+\\b(?:\[A-Z\]\[A-Za-z.'-\]+(?:\\s+\[A-Z\]\[A-Za-z.'-\]+)\\s+University(?!\\s+of)\|University\\s+of\\s+\[A-Z\]\[A-Za-z.'-\]+(?:\\s+\[A-Z\]\[A-Za-z.'-\]+)(?:,\\s\[A-Z\]\[A-Za-z.'-\]+(?:\\s+\[A-Z\]\[A-Za-z.'-\]+))?\|\[A-Z\]\[A-Za-z.'-\]+(?:\\s+\[A-Z\]\[A-Za-z.'-\]+)\\s+Institutes?\\s+of\\s+\[A-Z\]\[A-Za-z.'-\]+(?:\\s+\[A-Z\]\[A-Za-z.'-\]+))\\b
+
+instead of
+
+\[A-Z\]\[a-z\]+(?:\\s+\[A-Z\]\[a-z\]+)\\s+University \| \[A-Z\]\[a-z\]+(?:\\s+\[A-Z\]\[a-z\]+)\\s+University of +\[A-Z\]\[a-z\]+(?:\\s+\[A-Z\]\[a-z\]+)\\s\|\[A-Z\]\[a-z\]+(?:\\s+\[A-Z\]\[a-z\]+)\\s+ Institute of +\[A-Z\]\[a-z\]+(?:\\s+\[A-Z\]\[a-z\]+)\*\\s
+
+# **Question 4: Make a tidy dataset**
+
+Build a dataset which includes the journal, article title, authors, and affiliations for each paper. Go back to the original input, but not do all the formatting performed previously.
+
+```{r}
+# read in text, each line is a separate character
+abstracts <- readLines('data/abstract-sars-cov-2-set.txt', warn = FALSE)
+# combine all text into one character
+abstracts <- paste(abstracts, collapse = '\n')
+# split the text whenever 3 new lines occur in a row (indicating two blank lines)
+abstracts <- unlist(strsplit(abstracts, split = '\n\n\n'))
+```
+
+Extract the journal title for each article. This is in the first line of each entry, immediately after the citation number (ie. “1.”).
+
+```{r}
+journal <- str_extract(abstracts, "(?<=\\d\\.\\s).*?(?=\\n)")
+journal[1:3]
+```
+
+Extract the title of each article. This is the second non-empty line in each entry, with blank lines before and after.
+
+```{r}
+titles <- sapply(abstracts, function(x){
+  unlist(strsplit(x, split = "\n\n"))[2]
+}, USE.NAMES = FALSE)
+titles[1:3]
+```
+
+Use the same technique to extract the list of authors and call this object `authors`.
+
+```{r}
+authors <- sapply(abstracts, function(x){
+  unlist(strsplit(x, split = "\n\n"))[3]
+}, USE.NAMES = FALSE)
+authors[1:3]
+```
+
+Use a regular expression to extract the author affiliations section for each abstract. This always starts with a blank line followed by “Author information:” and ends with another blank line.
+
+```{r}
+affiliations <- str_extract(abstracts, "(?<=Author information:\n)([\\s\\S]*?)(?=\n\n)")
+affiliations[1]
+```
+
+Finally, put everything together into a single `data.frame` and use `knitr::kable` to print the first five results.
+
+```{r}
+papers <- data.frame(
+  titles = titles, 
+  journal = journal,
+  authors = authors, 
+  affiliations = affiliations, 
+  stringsAsFactors = FALSE
+)
+knitr::kable(papers[1:5, ])
+```
