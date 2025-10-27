@@ -1,0 +1,694 @@
+---
+title: "PM 566: Midterm Project"
+author: "Tarun Mahesh"
+execute:
+  warning: false
+  message: false
+format: 
+  html:
+    embed-resources: true
+fig-width: 10
+fig-height: 10
+theme: superhero
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+# Introduction
+
+The goal of this data analysis is to examine if/how monetary resources
+relate to the burden of drug-resistant tuberculosis (DR-TB) across
+countries. Multi-Drug Resistance in any disease, is a cause for grave
+concern from a public health perspective. The selection of
+drug-resistant TB strains, typically due to the accumulation of
+mutations in the bacteria as a result of therapy
+mismanagement/non-adherence or poor drug quality, impacts all TB
+patients, but may especially impact those from low-income countries,
+whose access to high-quality, timely healthcare may be limited. If there
+exists some correlation between healthcare capita and drug resistance,
+it may indicate a requirement for countries with high incidence of
+multi-drug resistant TB to increase their healthcare investment/seek aid
+as necessary.
+
+So, the primary question is:
+
+> **Is there a relationship between a country's monetary power and the
+> burden of MDR-TB?**
+
+For this analysis, multiple datasets have been merged using common
+columns or keys, and the unfortunate result of having multiple datasets
+collected by different institutions (in this case, WHO and World Bank),
+is that some datasets are more expansive than others. To standardize the
+analysis, only the data from 2017-2023 (which is reported in all
+datasets) is considered.
+
+The datasets used are:
+
+1.  From the World Health Organization
+    1.  TB Burden Per Year Per Country
+
+    2.  MDR TB Burden Per Year Per Country (WHO treats rifampicin
+        resistance and multi-drug resistance the same)
+
+    3.  Drug-Resistance Testing (DST) Coverage Per Country Per Year
+
+    4.  Data Dictionary for all the above datasets
+2.  From the World Bank
+    1.  GDP per Capita (Country-Year)
+    2.  Health Expenditure per Capita (Country-Year)
+
+## **Reading in, Wrangling and Describing the Data**
+
+```{r}
+# Libraries 
+suppressPackageStartupMessages(library(readr))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyr))
+suppressPackageStartupMessages(library(knitr))
+
+# The output of this code is a table describing the variable and the data it 
+# contains (including some summary statistics like min and max). To protect 
+# from trying to assess non-numerical variables as numbers, we can return NA 
+# whenever a numerical operation is attempted on them. This is to ensure our 
+# output is clean. 
+
+foolproof_min <- function(x) if (is.numeric(x)) 
+  suppressWarnings(min(x, na.rm = TRUE)) else NA 
+foolproof_max <- function(x) if (is.numeric(x)) 
+  suppressWarnings(max(x, na.rm = TRUE)) else NA 
+
+# Reading in the data. I renamed the input files for clarity. 
+gdp_pc <- read_csv("GDP_Per_Capita.csv", show_col_types = FALSE, 
+                   na = c("", "NA", ".."))
+health_pc <- read_csv("Healthcare_Per_Capita.csv", show_col_types = FALSE, 
+                      na = c("", "NA", ".."))
+mdr_burden <- read_csv("MDR_TB_Burden_Country.csv", show_col_types = FALSE)
+tb_burden <- read_csv("TB_Burden_Country.csv", show_col_types = FALSE)
+mdr_ds <- read_csv("TB_DR_Surveillance.csv", show_col_types = FALSE)
+dict <- read_csv("TB_Data_Dictionary.csv", show_col_types = FALSE)
+
+# Changing the World Bank Data to Long Format 
+# View(gdp_pc)
+# View(health_pc)
+# A quick look at the data shows me that the years are arranged as one column 
+# per year, which is not very useful for downstream analyses. The data is also 
+# available from 1960-2025, which is far too many datapoints. So, I decided to 
+# pivot the data and restrict to 2017-2023. 
+
+gdp <- gdp_pc %>%
+  pivot_longer(cols = matches("^\\d{4}$"), names_to = "year", 
+               values_to = "GDPpc") %>%
+  mutate(year = as.integer(year)) %>%
+  rename(iso3 = 'Country Code') %>%
+  filter(year >= 2017, year <= 2023) %>%
+  select(iso3, year, GDPpc, Country = 'Country Name')
+
+health <- health_pc %>%
+  pivot_longer(cols = matches("^\\d{4}$"), names_to = "year", 
+               values_to = "Healthpc") %>%
+  mutate(year = as.integer(year)) %>%
+  rename(iso3 = 'Country Code') %>%
+  filter(year >= 2017, year <= 2023) %>%
+  select(iso3, year, Healthpc, Country = 'Country Name')
+
+# View(gdp)
+# View(health) 
+# The data is now in long format. There are 7 rows per country, 
+# each row corresponding to one year 2017 to 2023
+
+# Now restricting the WHO data to 2017-2023 
+mdr <- mdr_burden %>%
+  mutate(year = as.integer(year)) %>%
+  filter(year >= 2017, year <= 2023)
+
+tb <- tb_burden %>%
+  mutate(year = as.integer(year)) %>%
+  filter(year >= 2017, year <= 2023)
+
+ds <- mdr_ds %>%
+  mutate(year = as.integer(year)) %>%
+  filter(year >= 2017, year <= 2023)
+```
+
+Now stepping through the initial steps of EDA, first checking the data
+size after restricting to 2017-2023.
+
+```{r}
+library(kableExtra)
+
+# I'm using knitr and the kableExtra package to print the dimensions of my 
+# datasets
+dimensions <- tibble::tibble(Dataset = c("GDP Per Capita", 
+                                         "Healthcare Per Capita", 
+                                         "MDR TB Burden", "TB Burden", 
+                                         "TB DR Surveillance"), 
+                             Number_of_Rows = c(nrow(gdp), nrow(health), 
+                                                nrow(mdr), nrow(tb), nrow(ds)), 
+                             Number_of_Columns = c(ncol(gdp), ncol(health), 
+                                                   ncol(mdr), ncol(tb), 
+                                                   ncol(ds)) )
+
+kable(dimensions, caption = "Dimensions of Datasets Used") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+```
+
+This table sumarises the scope of each source, after restricting to
+2017-2023. The WHO burden and surveillance files each contain about 1500
+country-years with dozens of variables, the world bank files contribute
+one row per country-year for GDP and health expenditure. Together the
+coverage is broad enough for the kind of global comparison I am trying
+to run.
+
+Next, to succinctly summarise the variables and their types, as well as
+some summary statistics of each variable-
+
+```{r}
+# For this part, my aim is, for each dataset, produce a table documenting 
+# variable name, definition (picked up from the data dictionary), data type, 
+# min/max, number of NA values
+
+# Instead of writing the same set of code over and over for each dataset, 
+# I decided to write a function. 
+
+variables <- function(dat, dict) {
+  types <- sapply(dat, function(x) paste(class(x), collapse = ","))
+  navals <- sapply(dat, function(x) sum(is.na(x))) 
+  mins <- sapply(dat, foolproof_min)
+  maxs <- sapply(dat, foolproof_max)
+  
+tibble(variable_name = names(dat), type = unname(types), no_of_na = 
+         unname(navals), min = unname(mins), max = unname(maxs)) %>%
+    left_join(dict %>% select(variable_name, definition), 
+              by = "variable_name") %>%
+    select(variable_name, definition, type, min, max, no_of_na)}
+
+mdr_vars <- variables(mdr, dict)
+tb_vars <- variables(tb, dict) 
+ds_vars <- variables(ds, dict)
+gdp_vars <- variables(gdp, dict) 
+health_vars <- variables(health, dict)
+
+# Important! Each dataset has a lot of variables, many of which I do not 
+# use downstream. To conserve space in my final report, I am only showing the 
+# information for the variables I use later on. 
+
+mdr_toshow <- c("iso3","year","e_inc_rr_num")
+tb_toshow <- c("iso3","year","g_whoregion","e_inc_100k","e_pop_num")
+ds_toshow <- c("iso3","year","pulm_labconf_new","pulm_labconf_ret", 
+               "r_rlt_new","r_rlt_ret","rr_new","rr_ret")
+gdp_toshow <- c("iso3","year","GDPpc","Country")
+health_toshow <- c("iso3","year","Healthpc","Country")
+
+kable(mdr_vars %>% filter(variable_name %in% mdr_toshow), caption = 
+        "Variables from Multi-Drug Resistance Dataset") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+kable(tb_vars %>% filter(variable_name %in% tb_toshow), caption = 
+        "Variables from Tuberculosis Burden Dataset") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+  
+kable(ds_vars %>% filter(variable_name %in% ds_toshow), caption = 
+        "Variables from Data Surveillance Dataset") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+kable(gdp_vars %>% filter(variable_name %in% gdp_toshow), caption = 
+        "Variables from GDP per Capita Dataset") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+kable(health_vars %>% filter(variable_name %in% health_toshow), caption = 
+        "Variables from Healthcare Expenditure per Capita Dataset") %>%
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+```
+
+These summaries makes it very clear that analyzing proportions instead
+of raw counts is required because the denominators (r_rlt_x for example)
+vary a lot.
+
+As I was going through the variables and their definitions, I noticed
+that there are some pitfalls to any analysis we try to achieve here.
+
+The WHO and World Bank tables give us raw counts (number tested, number
+resistant etcetera) and the context (GDP/Healthcare expenditure per
+capita), but raw counts cannot be compared directly across countries or
+years because:
+
+1.  Different population sizes can have different TB burden (a country
+    with more TB will naturally have more resistant cases, even if the
+    proportion that are resistant are identical to a smaller country)
+2.  Different testing intensity (countries with more well (established
+    drug susceptibility testing (DST) will detect more resistance just
+    because they looked more/harder. In other words, low testing can
+    make resistance look low.
+3.  Previously treated patients have higher resistance risk than new
+    patients. So, a country testing more previously treated cases would
+    look worse.
+
+To make any further downstream analysis more fair (apples-to-apples), I
+chose to summarize drug resistance as proportions and explicitly
+quantify the coverage of testing, making the data less sensitive to
+country size. For this, I created three new variables from the raw data:
+
+1.  DST coverage: How many bacteriologically confirmed pulmonary TB
+    cases per country per year received rifampicin?
+
+    $DST Coverage = \frac{r-rlt-new + r-rlt-ret}{pulm-labconf-new + pulm-labconf-ret}$
+
+2.  RR/MDR cases among new cases: The proportion of new
+    bacteriologically confirmed pulmonary TB patients who were
+    rifampicin resistant (MDR)
+
+    $MDR Share New = \frac{rr-new}{r-rlt-new}$
+
+3.  RR/MDR Share Overall = Proportion of MDR among all tested
+    bacteriologically confirmed pulmonary TB cases (new or prev.
+    treated). I use this to reflect the overall detected resistance
+    burden in the tested population.
+
+    $RRShareAll = \frac{rr-new + rr-ret}{r-rlt-new + r-rlt-ret}$
+
+4.  MDR incidence per 100k = The estimated incidence of Multi Drug
+    Resistance in a country-year per 100000 people
+
+    $MDRInc100k = \frac{e-inc-rr-num}{e-pop-num}$
+
+Next step- defining the new variables and creating a combined dataset.
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+MDRData <- gdp %>%
+  full_join(health %>% select(iso3, year, Healthpc), by = c("iso3","year")) %>%
+  full_join(tb %>% select(iso3, year, g_whoregion, e_inc_100k, e_pop_num), by = 
+              c("iso3","year")) %>%
+  full_join(ds %>% select(iso3, year, pulm_labconf_new, pulm_labconf_ret, 
+                          r_rlt_new, r_rlt_ret, rr_new, rr_ret), 
+            by = c("iso3","year")) %>%
+  full_join(mdr %>% select(iso3, year, e_inc_rr_num), 
+            by = c("iso3", "year")) %>%
+  mutate(DST_coverage = if_else((pulm_labconf_new + pulm_labconf_ret) > 0,
+      (r_rlt_new + r_rlt_ret) / (pulm_labconf_new + pulm_labconf_ret), NA_real_),
+    RR_share_new = if_else(r_rlt_new > 0, rr_new / r_rlt_new, NA_real_),
+    RR_share_all = if_else((r_rlt_new + r_rlt_ret) > 0, 
+                           (rr_new + rr_ret) / (r_rlt_new + r_rlt_ret), NA_real_), 
+    mdr_inc_100k = if_else(!is.na(e_inc_rr_num) & !is.na(e_pop_num) & 
+                             e_pop_num > 0, e_inc_rr_num / e_pop_num * 100000, 
+                           NA_real_),
+    coverage_more_than_80 = !is.na(DST_coverage) & DST_coverage >= 0.80)
+```
+
+Before visualizing the key variables, I want to confirm that the values
+we are using are "normal", and not unexpected. For instance, proportions
+need to be between 0-1, resistant cases cannot exceed tested cases,
+tested cases cannot exceed lab-confirmed cases, and our main numeric
+quantities cannot be negative.
+
+```{r}
+library(dplyr) 
+
+# A proportion is impossible if it lies outside 0-1.
+impossible_proportions <- MDRData %>%
+  mutate(
+    impossible_DST  = !is.na(DST_coverage) & !(DST_coverage >= 0 & 
+                                                 DST_coverage <= 1),
+    impossible_RRn  = !is.na(RR_share_new) & !(RR_share_new >= 0 & 
+                                                 RR_share_new <= 1),
+    impossible_RRa  = !is.na(RR_share_all) & !(RR_share_all >= 0 & 
+                                                 RR_share_all <= 1)
+  ) %>%
+  filter(impossible_DST | impossible_RRn | impossible_RRa) %>%
+  select(iso3, year, DST_coverage, RR_share_new, RR_share_all, 
+         impossible_DST, impossible_RRn, impossible_RRa)
+
+paste("The number of data entires with impossible proportions: ", 
+      nrow(impossible_proportions))
+
+# A relationship is illogical if the incidences are greater than 
+# the the cases tested
+illogical <- MDRData %>%
+  transmute(
+    iso3, year,
+    rr_new_gt_tested  = rr_new  > r_rlt_new,
+    rr_ret_gt_tested  = rr_ret  > r_rlt_ret,
+    tested_gt_labconf = (r_rlt_new + r_rlt_ret) >
+                        (pulm_labconf_new + pulm_labconf_ret)
+  ) %>%
+  filter(rr_new_gt_tested | rr_ret_gt_tested | tested_gt_labconf)
+
+paste("The number of data entires with illogical counts: ", nrow(illogical))
+
+# The key variables cannot be negative
+negatives <- MDRData %>%
+  select(iso3, year,
+         pulm_labconf_new, pulm_labconf_ret,
+         r_rlt_new, r_rlt_ret, rr_new, rr_ret,
+         e_inc_100k, GDPpc, Healthpc) %>%
+  filter(if_any(where(is.numeric), ~ .x < 0))
+
+paste("The number of data entires with negative values for non-negative 
+      variables: ", nrow(negatives))
+```
+
+To remove the "bad" data before plotting:
+
+```{r}
+library(tidyr)
+
+# Removing the data that we defined as "bad" from the previous step
+MDRData_clean <- MDRData %>%
+  filter(
+    is.na(DST_coverage) | (DST_coverage >= 0 & DST_coverage <= 1),
+    is.na(RR_share_new) | (RR_share_new >= 0 & RR_share_new <= 1),
+    is.na(RR_share_all) | (RR_share_all >= 0 & RR_share_all <= 1)
+  ) %>%
+  filter(
+    !replace_na(rr_new  > r_rlt_new, FALSE),
+    !replace_na(rr_ret  > r_rlt_ret, FALSE),
+    !replace_na((r_rlt_new + r_rlt_ret) >
+                (pulm_labconf_new + pulm_labconf_ret), FALSE)
+  )
+
+rows_removed = nrow(MDRData) - nrow(MDRData_clean)
+
+paste("The number of rows removed: ", rows_removed)
+```
+
+Now that the data is cleaned, I can choose and plot my key variables:
+
+DST_coverage, RR_share_new, RR_share_all, e_inc_100k, GDPpc and
+Healthpc.
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2) 
+library(knitr) 
+library(scales)
+
+data1 <- MDRData_clean %>%
+  select(DST_coverage, RR_share_new, RR_share_all) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  mutate(variable = factor(variable, 
+                           levels = c("DST_coverage", "RR_share_new", 
+                                      "RR_share_all"), 
+                           labels = c("DST coverage", "RR share (new)", 
+                                      "RR share (all)")))
+
+data2 <- data1 %>%
+  group_by(variable) %>%
+  summarise(median = median(value), .groups = "drop")
+
+# Histogram  of resistance and DST coverage between 2017-2023
+ggplot(data1, aes(value)) + 
+  geom_histogram(bins = 20, boundary = 0, closed = "left", fill = "salmon", 
+                 color = "black", alpha = 0.6) + 
+  geom_vline(data = data2, aes(xintercept = median), linetype = 2) + 
+  coord_cartesian(xlim = c(0,1)) + 
+  facet_wrap(~variable, nrow = 1) + 
+  labs(title = "Distributions of resistance shares and DST coverage between 2017 to 2023", 
+       x = "Proportion", y = "Country-years") + theme_minimal()
+
+data3 <- MDRData_clean %>%
+  transmute('GDP per Capita (log10)' = log10(GDPpc), 
+            'Health Expen. per Capita (log10)' = log10(Healthpc), 
+            'TB Incidence per 100k (log10)' = log10(e_inc_100k)) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  filter(is.finite(value))
+
+data4 <- data3 %>%
+  group_by(variable) %>%
+  summarise(median = median(value), .groups = "drop")
+
+# Histogram of GDP per capita, Health expenditure per capita and TB incidence 
+# per 100k across 2017 to 2023
+ggplot(data3, aes(value)) + 
+  geom_histogram(bins = 30, boundary = 0, closed = "left", fill = "mediumaquamarine", 
+                 color = "black", alpha = 0.6) + 
+  geom_vline(data = data4, aes(xintercept = median), linetype = 2) + 
+  facet_wrap(~variable, scales = "free_x", nrow = 1) + 
+  labs(title = "Distribution of resources and TB incidence (log10, 2017 to 2023)", 
+       x = "log10(value)", y = "Country-years") + 
+  theme_minimal()
+
+# Boxplot of MDR share by WHO region
+ggplot(MDRData_clean %>% filter(!is.na(RR_share_all)), 
+       aes(x = g_whoregion, y = RR_share_all, fill = g_whoregion)) +
+  geom_boxplot(outlier.alpha = 0.25, color = "grey20") +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  labs(x = "WHO region", y = "MDR share (all tested)",
+       title = "MDR share by WHO region") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+Interpretations:
+
+1.  DST Coverage is very right-skewed towards high-coverage (\>0.8),
+    with a long left tail. This implies that many country-years have
+    good rifampicin testing coverage, but some still lag far behind.
+2.  RR Shares (new and all) are tightly concentrated near 0-10%, with a
+    few extreme values near 1, which might be some small denominators
+    (few tests leading to unstable proportions)
+3.  After log transformation, GDP per capita and health expenditure per
+    capita look roughly bell-shaped. TB incidence per 100k seems
+    slightly skewed to the right even on the log scale, which shows that
+    high TB burdens are fewer but far higher than the median.
+4.  Most WHO regions contribute similarly to the share of MDR, with some
+    obvious outliers like Europe.
+
+Now, for the analysis:
+
+## Map of (Latest) Tuberculosis Incidence per 100k
+
+```{r}
+library(dplyr)
+library(leaflet)
+library(sf)
+library(rnaturalearth)
+
+#Building the input data for leaflet
+worldmap <- ne_countries(scale = "medium", returnclass = "sf") %>%
+  select(iso3 = iso_a3, name_long, geometry) 
+
+latest_incidence <- MDRData_clean %>%
+  filter(!is.na(e_inc_100k)) %>%
+  group_by(iso3) %>%
+  slice_max(year, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(iso3, year, incidence_100k = e_inc_100k)
+
+world_incidences <- worldmap %>% left_join(latest_incidence, by = "iso3")
+
+#Defining my color palette
+coloring <- colorBin("YlOrRd", domain = world_incidences$incidence_100k, bins = c(0,10,25,50,100,200,400,800), na.color = "white")
+
+# Making an interactive world map
+leaflet(world_incidences) %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(fillColor = ~coloring(incidence_100k), 
+              color = "darkgrey", weight = 0.5, 
+              opacity = 1, 
+              fillOpacity = 0.85, 
+              label = ~paste0(name_long, ifelse(is.na(incidence_100k), ": No Data Available", 
+              paste0(": ", round(incidence_100k), " per 100k (", year, ")"))), 
+              highlight = highlightOptions(weight = 2, 
+                                  color = "black", bringToFront = TRUE)) %>%
+      addLegend("bottomright", pal = coloring, values = ~incidence_100k, 
+                title = "TB incidences per 100k", opacity = 0.9)
+  
+```
+
+This map highlights persistent hotspots in parts of sub-Saharan Africa
+and SE Asia, with lower incidences across most of Europe and North
+America.
+
+```{r}
+library(dplyr) 
+library(ggplot2) 
+library(scales) 
+
+# Making a few extra helper columns 
+MDRData_clean <- MDRData_clean %>%
+  mutate(log_gdp = log10(GDPpc), log_health = log10(Healthpc), 
+         total_test = r_rlt_new + r_rlt_ret, rr_total = rr_new + rr_ret)
+```
+
+## Change from 2017 to 2023 in share of MDR TB
+
+```{r}
+# Computing the median MDR share per country in 2017 and 2023 and visualizing those countries (top 50) with the largest change in medians. 
+change_2017_2023 <- MDRData_clean %>%
+  filter(year %in% c(2017, 2023)) %>%
+  group_by(iso3, g_whoregion) %>%
+  summarise(median_2017 = median(RR_share_all[year == 2017], na.rm = TRUE), 
+            median_2023 = median(RR_share_all[year == 2023], na.rm = TRUE), 
+            .groups = "drop") %>%
+  filter(!is.na(median_2017), !is.na(median_2023)) %>%
+  mutate(difference = median_2023 - median_2017) %>%
+  slice_max(abs(difference), n = 50)   
+
+ggplot(change_2017_2023) + 
+  geom_segment(aes(x = 1, xend = 2, y = median_2017, yend = median_2023, 
+                   color = difference > 0), linewidth = 0.5, alpha = 0.9) + 
+  geom_point(aes(x = 1, y = median_2017), shape = 21, fill = "grey", size = 1) + 
+  geom_point(aes(x = 2, y = median_2023), shape = 21, fill = "grey", size = 1) + 
+  scale_color_manual(values = c("blue", "red"), labels = c("Decreases", "Increases"), 
+                     name = "MDR 2017 to 2023: ") + 
+  scale_y_continuous(labels = percent) + 
+  scale_x_continuous(breaks = c(1, 2), labels = c("2017", "2023")) + 
+  facet_wrap(~ g_whoregion, scales = "free_y") + 
+  labs(x = NULL, y = "MDR share", title = "Change in MDR TB, 2017 to 2023") + 
+  theme_minimal() 
+```
+
+This graph describes the countries with the most change (top 50) in the
+median MDR share between 2017 and 2023. Africa and the Americas showed
+the most increase in MDR share between 2017 and 2023. Africa also had a
+significant number of countries within the top 50 that showed a decrease
+in MDR share. However, it is important to note that DST coverage is not
+included here. It could be possible that countries have higher (or
+lower) MDR TB reports just because they had high/low testing.
+
+## GDP vs MDR Incidence per 100k
+
+```{r}
+library(scales) 
+
+# Plotting MDR TB per 100k as a function of GDP per capita. I chose to scale by log10 for readability. 
+
+ggplot(MDRData %>% filter(is.finite(log10(GDPpc)), is.finite(mdr_inc_100k)), 
+       aes(x = log10(GDPpc), y = mdr_inc_100k, color = pmin(DST_coverage, 1))) + 
+  geom_point(alpha = 0.25, size = 1) + 
+  geom_smooth(method = "lm", se = TRUE, color = "black") + 
+  scale_color_viridis_c(name = "DST coverage", labels = percent) + 
+  scale_y_log10(labels = comma) + 
+  labs(title = "Is higher GDP per capita associated with lower MDR TB incidence?", 
+       x = "log 10(GDP per capita)", y = "MDR TB incidence per 100k (log scale)") + 
+  theme_minimal()
+
+```
+
+## GDP vs MDR Incidence per 100k, filtered for DST Coverage
+
+```{r}
+library(scales) 
+
+# Same plot as before but adding a DST >= 80% filter. 
+
+ggplot(MDRData %>% filter(coverage_more_than_80, is.finite(log10(GDPpc)), 
+                          !is.na(RR_share_all)), 
+       aes(x = log10(GDPpc), y = RR_share_all)) + 
+  geom_point(alpha = 0.4, size = 1) + 
+  geom_smooth(method = "lm", se = TRUE, color = "black") + 
+  scale_y_continuous(labels = percent) + 
+  labs(title = "GDP vs MDR Share Filtered for DST Coverage >= 80%", 
+       x = "log10 (GDP per Capita)", 
+       y = "MDR among those tested (proportion)") + 
+  theme_minimal()
+```
+
+From both above graphs: There is a clear negative relationship. As GDP
+per capita increases, estimated MDR incidence per 100k falls. Using log
+scale on both axes stabilizes the variance and shows that this pattern
+holds across several magnitude orders in income and incidence. Most
+countries seem to have DST coverage \> 50%.
+
+## Healthcare Expenditure vs MDR Incidence per 100k
+
+```{r}
+library(scales) 
+
+# Plotting MDR TB incidence per 100k as a function of healthcare expenditure per country. 
+
+ggplot(MDRData %>% filter(is.finite(log10(Healthpc)), is.finite(mdr_inc_100k)), 
+       aes(x = log10(Healthpc), y = mdr_inc_100k, color = pmin(DST_coverage, 1))) + 
+  geom_point(alpha = 0.25, size = 1) + 
+  geom_smooth(method = "lm", se = TRUE, color = "black") + 
+  scale_color_viridis_c(name = "DST coverage", labels = percent) + 
+  scale_y_log10(labels = comma) + 
+  labs(title = "Is higher healthcare expenditure per capita associated with lower MDR TB incidence?", 
+       x = "log 10(Healthcare Expenditure per capita)", y = "MDR TB incidence per 100k (log scale)") + 
+  theme_minimal()
+```
+
+## Healthcare Expenditure vs MDR Incidence per 100k, filtered for DST coverage
+
+```{r}
+library(scales) 
+
+# Same plot as above but filtering to DST >= 80%
+
+ggplot(MDRData %>% filter(coverage_more_than_80, is.finite(log10(Healthpc)), !is.na(RR_share_all)), 
+       aes(x = log10(Healthpc), y = RR_share_all)) + 
+  geom_point(alpha = 0.4, size = 1) + 
+  geom_smooth(method = "lm", se = TRUE, color = "black") + 
+  scale_y_continuous(labels = percent) + 
+  labs(title = "Healthcare Expenditure vs MDR Share Filtered for DST Coverage >= 80%", 
+       x = "log10 (Healthcare Expenditure per Capita)", 
+       y = "MDR among those tested (proportion)") + 
+  theme_minimal()
+```
+
+The graphs (and DST coverage) mirror the GDP relationship. Higher
+per-capita health spending aligns with lower MDR incidence per 100k.
+While this is definitely not causal, the gradient is consistent with the
+idea that systems with better resources not only detect, but also
+prevent and treat drug resistance more effectively.
+
+## Summary Statistics
+
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+d1 <- MDRData %>% filter(is.finite(log10(GDPpc)), is.finite(log10(mdr_inc_100k))) %>% 
+  transmute(x = log10(GDPpc), y = log10(mdr_inc_100k))
+rho1 <- if (nrow(d1) > 1) cor(d1$x, d1$y, method = "spearman") else NA_real_
+
+d2 <- MDRData %>% filter(coverage_more_than_80, is.finite(log10(GDPpc)), !is.na(RR_share_all)) %>% 
+  transmute(x = log10(GDPpc), y = RR_share_all)
+rho2 <- if (nrow(d2) > 1) cor(d2$x, d2$y, method = "spearman") else NA_real_
+
+stats_table <- tibble::tibble("Comparison" = c("log10(GDP per Capita) vs log10(MDR incidence per 100k)", "log10(GDP per Capita) vs MDR share (DST ≥80%)"), "Spearman 𝛠"= c(rho1, rho2))
+
+kable(stats_table, digits = 3, caption = "Associations between GDP Per Capita and MDR burden (2017–2023)") %>% 
+  kable_styling(bootstrap_options = "striped", full_width = FALSE)
+
+d3 <- MDRData %>% filter(is.finite(log10(Healthpc)), is.finite(log10(mdr_inc_100k))) %>% 
+  transmute(x = log10(Healthpc), y = log10(mdr_inc_100k))
+rho1 <- if (nrow(d3) > 1) cor(d3$x, d3$y, method = "spearman") else NA_real_
+
+d4 <- MDRData %>% filter(coverage_more_than_80, is.finite(log10(Healthpc)), !is.na(RR_share_all)) %>% transmute(x = log10(Healthpc), y = RR_share_all)
+rho2 <- if (nrow(d4) > 1) cor(d4$x, d4$y, method = "spearman") else NA_real_
+
+stats_table <- tibble::tibble("Comparison" = c("log10(Health. Exp. Per Capita) vs log10(MDR incidence per 100k)", "log10(Health. Exp. Per Capita) vs MDR share (DST ≥80%)"), "Spearman 𝛠"= c(rho1, rho2))
+
+kable(stats_table, digits = 3, caption = "Associations between Healthcare Expenditure and MDR burden (2017–2023)") %>% kable_styling(bootstrap_options = "striped", full_width = FALSE)
+```
+
+Spearman correlation between log10 GDPpc and log10 MDR incidence per
+100k is moderately negative at -0.56, and between log10 Healthpc and
+log10 MDR incidence per 100k is similar. The correlation gets weaker
+when DST is used to restrict the data, which I would expect because the
+share of MDR incidence depends on who is tested even when the coverage
+is high. Together, I would conclude that these results suggest income
+and health spending tract absolute MDR burden rather than the proportion
+among those who were tested.
+
+# Conclusion 
+
+Across 2017–2023, ***countries with greater economic resources and
+higher per-capita health spending tend to have lower MDR/RR-TB incidence
+per 100k***, and (to a lesser extent) lower MDR shares among those
+tested.
+
+These patterns persist after removing implausible records and, for
+shares, focusing on settings with high DST coverage. The consistency
+(while NOT causal) across multiple plots (distributions, map, gradients,
+correlations) supports the hypothesis that stronger finances are
+accompanied by reduced MDR burden, possibly via prevention, earlier
+diagnosis, and more effective treatment programs.
