@@ -1,0 +1,313 @@
+---
+title: "PM 566: Homework 03"
+author: "Tarun Mahesh"
+execute: 
+  warning: false
+format: 
+  html:
+    embed-resources: true
+fig-width: 10
+fig-height: 10
+theme: superhero
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+# Initial Setup
+
+```{r}
+suppressPackageStartupMessages({
+  library(scales)
+  library(kableExtra)
+  library(forcats)
+  library(ggraph)
+  library(igraph)
+  library(ggridges)
+  library(patchwork)
+  library(tidytext)
+  library(dplyr)
+  library(tidyr)
+})
+
+from_pubmed <- "https://raw.githubusercontent.com/USCbiostats/data-science-data/master/03_pubmed/pubmed.csv"
+
+pubmed_data <- readr::read_csv(from_pubmed, show_col_types = FALSE) |>
+  select(term, abstract) |>
+  mutate(abstract_id = row_number())
+```
+
+# Text Mining
+
+## Question 1
+
+How many abstracts are associated with each search term? Tokenize the
+abstracts and count the number of each token. Do you see anything
+interesting? What are the 5 most common tokens for each search term?
+
+For this question, this is my strategy:
+
+1.  Count abstracts by term (using *count*)
+2.  Tokenize each abstract into single words (using *unnest_tokens*)
+3.  Count token frequencies within each term (using *count*)
+4.  List the top 5 tokens per term without removing the stop words
+    (using *group by* and *slice max*)
+
+```{r}
+absperterm <- pubmed_data |>
+  count(term, name = "Number of Abstracts") |>
+  arrange(desc(`Number of Abstracts`))
+
+absperterm |>
+  kable(format = "html", caption = "Abstracts per Search Term") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover"))
+
+absperterm |>
+  ggplot(aes(y = fct_reorder(term, `Number of Abstracts`),
+             x = `Number of Abstracts`)) +
+  geom_col(width = 0.7) +
+  scale_x_continuous(labels = comma) +
+  labs(y = NULL, x = "Number of abstracts",
+       title = "Abstracts for each search term") +
+  theme_minimal(base_size = 13)
+
+tokens <- pubmed_data |> unnest_tokens(token, abstract)
+
+counts <- tokens |> count(term, token, sort = TRUE)
+
+top5 <- counts |>
+  group_by(term) |> slice_max(n, n = 5, with_ties = FALSE) |> ungroup()
+
+top5 |>
+  arrange(term, desc(n)) |> group_by(term) |>
+  mutate(rank = row_number()) |> ungroup() |>
+  select(term, rank, token, n) |>
+  kable("html", caption = "Top 5 Tokens per Term") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover")) |> collapse_rows(columns = 1)
+
+```
+
+The dataset is heavily weighted towards covid abstracts. Before removing
+the stop words, words like "the", "of", "and" etc. dominate. But what's
+interesting, is that some tokens are so strong that they domante over
+the stop words, like "covid" and "19". The sheer volume of covid
+abstracts and the dominance of the "covid" and "19" tokens reinforces
+the impact the pandemic had on the scientific community and the world as
+a whole.
+
+## Question 2
+
+Does removing stop words change what tokens appear as the most frequent?
+What are the 5 most common tokens for each search term after removing
+stop words?
+
+For this question, this is my strategy:
+
+1.  Remove the stop words (using *anti_join(stop_words)*)
+2.  Recount the tokens per term
+3.  Return the top 5 tokens per term after cleaning
+
+```{r}
+tokens_nostop <- tokens |>
+  anti_join(stop_words, by = c("token" = "word"))
+
+tokencounts_nostop <- tokens_nostop |> count(term, token, sort = TRUE)
+
+top_nostop <- tokencounts_nostop |> group_by(term) |>
+  slice_max(n, n = 5, with_ties = FALSE) |> ungroup()
+
+top_nostop |>
+  arrange(term, desc(n)) |> group_by(term) |>
+  mutate(rank = row_number()) |> ungroup() |>
+  select(term, rank, token, n) |>
+  kable("html", caption = "Top 5 Tokens per Term (After Stop Words Were Removed)") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover")) |> collapse_rows(columns = 1)
+
+```
+
+Removing the stop words drastically changes the most frequent tokens per
+search term. Now, all tokens are directly related to the search term.
+These tokens are more informative for further analysis. Some terms are
+more related to the clinical context than the actual disease, like
+"patients".
+
+## Question 3
+
+Tokenize the abstracts into bigrams. Find the 10 most common bigrams and
+visualize them.
+
+For this question, this is my strategy:
+
+1.  Build bigrams (using *(unnest_ngrams)*)
+2.  Split into word 1 and 2
+3.  Drop the bigrams that have stop words on either side (using
+    *filter*)
+4.  Count the frequencies
+5.  Print the Top 10 bigrams
+6.  Plot them (using *ggplot*, *forcats* and *fct_reorder*)
+
+```{r}
+bigrams <- pubmed_data |>
+  unnest_ngrams(ngram, abstract, n = 2) |>
+  separate(ngram, into = c("word_1", "word_2"), sep = " ")
+
+bigrams_filter <- bigrams |>
+  filter(!word_1 %in% stop_words$word, !word_2 %in% stop_words$word) 
+
+top10_bigrams <- bigrams_filter |>
+  count(word_1, word_2, sort = TRUE) |> 
+  mutate(bigram = paste(word_1, word_2)) |> slice_head(n = 10) |>
+  select(bigram, n)
+
+top10_bigrams |>
+  kable(format = "html", caption = "Top 10 Bigrams") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover"))
+
+top10_bigrams |>
+  mutate(bigram = fct_reorder(bigram, n)) |> ggplot(aes(n, bigram)) +
+  geom_segment(aes(x = 0, xend = n, y = bigram, yend = bigram)) +
+  geom_point(size = 3) + labs(x = "Count", y = NULL, title = "Top 10 Bigrams (With No Stop Words)") +
+  theme_minimal(base_size = 13)
+```
+
+The most common bigrams are the disease names themselves, which
+reinforces the cohesiveness between the search terms and the abstracts
+the search returns. 95 ci is really interesting here because it is a
+statistical term (95% confidence interval). It seems like many abstracts
+report statistical significance. Some virology terms (SARS COV 2) are
+typically trigrams so they get split into their constituent bigrams,
+"sars cov" and "cov 2".
+
+## Question 4
+
+Calculate the TF-IDF value for each word-search term combination (here
+you want the search term to be the “document”). What are the 5 tokens
+from each search term with the highest TF-IDF value? How are the results
+different from the answers you got in Question 1?
+
+For this question, this is my strategy:
+
+1.  Treat each search *term* as a document
+2.  Compute TF-IDF for every (term, token)
+3.  Extract five highest TF-IDF tokens per term
+
+```{r}
+token_counts <- tokens |>
+  count(term, token, name = "n")
+
+tf_idf <- token_counts |>
+  bind_tf_idf(token, term, n)
+
+top_tfidf <- tf_idf |>
+  group_by(term) |> slice_max(tf_idf, n = 5, with_ties = FALSE) |>
+  arrange(term, desc(tf_idf)) |> mutate(rank = row_number()) |>
+  ungroup() |> select(term, rank, token, tf_idf)
+
+top_tfidf |>
+  rename(Term = term, Rank = rank, Token = token, `TF-IDF` = tf_idf) |>
+  mutate(`TF-IDF` = round(`TF-IDF`, 4)) |>
+  kable("html", caption = "Top Five TF_IDF Tokens per Term") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover")) |>
+  collapse_rows(columns = 1)  
+```
+
+In question 1, we used raw counts, which just outputs word frequency (or
+token frequency). In this question by using TF-IDF, we essentially
+reward term-specific vocabulary and down-weigh universally (in our
+dataset) present tokens. A very obvious effect of TF-IDF weighting is
+that words like "disease" and "patients" stop showing up, which are not
+relevant to any one specific disease.
+
+# Sentiment Analysis
+
+## Question 5
+
+Perform a sentiment analysis using the NRC lexicon. What is the most
+common sentiment for each search term? What if you remove `"positive"`
+and `"negative"` from the list?
+
+For this question, this is my strategy:
+
+1.  Map the tokens to NRC sentiments
+2.  Count sentiment frequencies within each term
+3.  Pick the most common sentiment
+4.  Repeat after removing "positive" and "negative" categories
+
+```{r, warning=FALSE}
+nrc_sentiments <- get_sentiments("nrc")
+
+tokens_word <- pubmed_data |> unnest_tokens(word, abstract) 
+
+nrc_byterm <- tokens_word |>
+  inner_join(nrc_sentiments, by = "word") |> 
+  count(term, sentiment, name = "n") |> group_by(term) |>
+  slice_max(n, n = 1, with_ties = FALSE) |> ungroup()
+
+nrc_byterm |>
+  rename(Term = term, Sentiment = sentiment, Number = n) |>
+  kable("html", caption = "NRC Sentiment per Term") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover")) |>
+  collapse_rows(columns = 1)  
+
+nrc_removed <- nrc_sentiments |> 
+  filter(!sentiment %in% c("positive", "negative"))
+
+nrc_byterm_removed <- tokens_word |>
+  inner_join(nrc_removed, by = "word") |> count(term, sentiment, name = "n") |>
+  group_by(term) |> slice_max(n, n = 1, with_ties = FALSE) |> ungroup()
+
+nrc_byterm_removed |>
+  rename(Term = term, Sentiment = sentiment, Number = n) |>
+  kable("html", caption = "NRC Sentiment per Term (Positive and Negative Removed)") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover")) |>
+  collapse_rows(columns = 1) 
+```
+
+Including "positive" and "negative" collapses nuances into broad and
+generic terms, but removing them reveals more emotional signals.
+
+The emotion of feart predominates for covid, meningitis and prostate
+cancer, which is consistent with the serious clinical outcomes of these
+diseases. Preeclampsia is mapped to anticipation, which suggests that
+many abstracts discuss monitoring, prediction etc. that is associated
+with this disease.
+
+## Question 6
+
+Now perform a sentiment analysis using the AFINN lexicon to get an
+average positivity score for each abstract (hint: you may want to create
+a variable that indexes, or counts, the abstracts). Create a
+visualization that shows these scores grouped by search term. Are any
+search terms noticeably different from the others?
+
+```{r, warning=FALSE}
+afinn_lexicon <- get_sentiments("afinn")
+
+afinn_scores <- tokens_word |>
+  inner_join(afinn_lexicon, by = "word") |> group_by(abstract_id, term) |>
+  summarise(avg_afinn = mean(value), .groups = "drop")
+
+afinn_scores <- pubmed_data |>
+  select(abstract_id, term) |>
+  left_join(afinn_scores, by = c("abstract_id","term"))
+
+afinn_scores |>
+  ggplot(aes(x = forcats::fct_reorder(term, avg_afinn, .fun = median, na.rm = TRUE),
+             y = avg_afinn)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  coord_flip() +
+  labs(x = "Search term", y = "Average AFINN score per abstract",
+       title = "AFINN sentiments")
+```
+
+The position of the boxes in the boxplot (high vs. low medians)
+indicates ranging between more positive vs more negative average
+language per abstract for a given term. Interpreting the AFINN lexicon
+analysis using the context from the previous NRC analysis, it's
+reasonable to expect prostate cancer, covid and meningitis to be more
+negative on average than others, which is validated in the AFINN
+analysis.
+
+The most noticeable differences are that prostate cancer has more
+negative sentiments while cystic fibrosis is more positive. The others
+are roughly neutral on average.
