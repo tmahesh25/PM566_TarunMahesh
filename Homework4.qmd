@@ -1,0 +1,236 @@
+---
+title: "PM 566: Homework 04"
+author: "Tarun Mahesh"
+execute: 
+  warning: false
+format: 
+  html:
+    embed-resources: true
+fig-width: 10
+fig-height: 10
+theme: superhero
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+# Section 1: High-Performance Computing
+
+### **Make things run faster**
+
+Rewrite the following R functions to make them faster.
+
+-   `fun1`: Find the total for each row of a numeric matrix. Output
+    should be a vector with length equal to the number of rows of the
+    input matrix.
+
+-   `fun2`: Calculate the running (cumulative) total along each row of a
+    numeric matrix. Output should be a matrix with dimensions equal to
+    the input matrix.
+
+```{r}
+# Total for each row
+fun1 <- function(mat) {
+  n <- nrow(mat)
+  ans <- double(n) 
+  for (i in 1:n) {
+    ans[i] <- sum(mat[i, ])
+  }
+  ans
+}
+
+fun1alt <- function(mat) {
+  rowSums(mat)
+}
+
+# running cumulative sum by row
+fun2 <- function(mat) {
+  n <- nrow(mat)
+  k <- ncol(mat)
+  ans <- mat
+  for (i in 1:n) {
+    for (j in 2:k) {
+      ans[i,j] <- mat[i, j] + ans[i, j - 1]
+    }
+  }
+  ans
+}
+
+fun2alt <- function(mat) {
+  t(apply(mat, 1, cumsum))
+}
+```
+
+### **Question 1 (30 points)**
+
+Using the dataset generated below (`dat`), check that both new functions
+produce the same outputs as the corresponding original functions.
+
+```{r}
+# Use the data with this code
+set.seed(2315)
+dat <- matrix(rnorm(200 * 100), nrow = 200)
+```
+
+Then use `microbenchmark` to check that your version is actually faster.
+How much faster is it?
+
+```{r}
+# Test for the first
+microbenchmark::microbenchmark(
+  fun1(dat),
+  fun1alt(dat), unit = "relative"
+)
+
+# Test for the second
+microbenchmark::microbenchmark(
+  fun2(dat),
+  fun2alt(dat), unit = "relative"
+)
+```
+
+fun1alt is roughly 30 times faster than fun1, and fun2alt is around 4-5
+times faster than fun2.
+
+### **Make things run faster with parallel computing**
+
+The following function allows us to estimate the value of pi through
+simulation:
+
+```{r}
+sim_pi <- function(n = 1000, i = NULL) {
+  p <- matrix(runif(n*2), ncol = 2)
+  mean(rowSums(p^2) < 1) * 4
+}
+
+# Here is an example of the run
+set.seed(156)
+sim_pi(1000) # 3.132
+```
+
+In order to get accurate estimates, we can run this function multiple
+times, with the following code:
+
+```{r}
+# This runs the simulation a 4,000 times, each with 10,000 points
+set.seed(1231)
+system.time({
+  ans <- unlist(lapply(1:4000, sim_pi, n = 10000))
+  print(mean(ans))
+})
+```
+
+```{r}
+all.equal(fun1(dat), fun1alt(dat))  
+all.equal(fun2(dat), fun2alt(dat))  
+```
+
+Both functions produce the same output, as evidenced by their values
+being fully equal.
+
+### **Question 2 (30 points)**
+
+Rewrite the previous code using `parLapply()` (or your parallelization
+method of choice) to parallelize it. Run the code once, using
+`system.time()`, to show that your version is faster.
+
+```{r, warning=FALSE}
+library(parallel)
+
+cl <- parallel::makePSOCKcluster(4L)
+parallel::clusterSetRNGStream(cl, 1231)
+
+system.time({
+  ans <- unlist(parLapply(cl, 1:4000, sim_pi, n = 10000))
+  print(mean(ans))
+})
+
+parallel::stopCluster(cl)
+```
+
+Comparing the time elapsed, the parallel version is around 2.5 times
+faster, and the output of pi is essentially the same (very similar)
+
+# Section 2: SQL
+
+Setup a temporary database of movie data by running the following code
+chunk:
+
+```{r}
+library(RSQLite)
+library(DBI)
+
+# Initialize a temporary in memory database
+con <- dbConnect(SQLite(), ":memory:")
+
+# Download tables
+film <- read.csv("https://raw.githubusercontent.com/ivanceras/sakila/master/csv-sakila-db/film.csv")
+film_category <- read.csv("https://raw.githubusercontent.com/ivanceras/sakila/master/csv-sakila-db/film_category.csv")
+category <- read.csv("https://raw.githubusercontent.com/ivanceras/sakila/master/csv-sakila-db/category.csv")
+
+# Copy data.frames to database
+dbWriteTable(con, "film", film)
+dbWriteTable(con, "film_category", film_category)
+dbWriteTable(con, "category", category)
+```
+
+## **Question 3 (10 points)**
+
+How many many movies are available in each `rating` category?
+
+```{sql connection=con}
+SELECT
+  rating,
+  COUNT(*) AS number_of_movies
+FROM film
+GROUP BY rating;
+```
+
+## **Question 4 (10 points)**
+
+What is the average replacement cost and rental rate for each `rating`
+category?
+
+```{sql connection=con}
+SELECT
+  rating,
+  AVG(replacement_cost) AS avg_replacement_cost, 
+  AVG(rental_rate) AS avg_rental_rate
+FROM film
+GROUP BY rating
+```
+
+## **Question 5 (10 points)**
+
+Use table `film_category` together with `film` to find how many films
+there are with each category ID.
+
+```{sql connection=con}
+SELECT
+  fc.category_id,
+  COUNT(DISTINCT f.film_id) AS no_of_films
+FROM film_category AS fc
+INNER JOIN film as f
+  ON fc.film_id = f.film_id
+GROUP BY fc.category_id
+```
+
+## **Question 6 (10 points)**
+
+Incorporate the `category` table into the answer to the previous
+question to find the name of the most popular category.
+
+```{sql connection=con}
+SELECT
+  c.name,
+  COUNT(DISTINCT f.film_id) AS no_of_films
+FROM film_category AS fc
+INNER JOIN film AS f
+  ON fc.film_id = f.film_id
+INNER JOIN category AS c
+  ON fc.category_id = c.category_id
+GROUP BY c.name
+ORDER BY no_of_films DESC
+```
+
+The most popular category is Sports, with 74 films.
